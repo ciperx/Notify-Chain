@@ -30,43 +30,43 @@ beforeEach(() => {
 });
 
 describe('buildSigningInput', () => {
-  it('returns raw payload when timestamp is not provided', () => {
+  it('returns raw payload when timestamp is not provided', async () => {
     expect(buildSigningInput('{"a":1}')).toBe('{"a":1}');
   });
 
-  it('returns raw payload when timestamp is empty string', () => {
+  it('returns raw payload when timestamp is empty string', async () => {
     expect(buildSigningInput('{"a":1}', '')).toBe('{"a":1}');
   });
 
-  it('prepends timestamp and separator when timestamp is provided', () => {
+  it('prepends timestamp and separator when timestamp is provided', async () => {
     expect(buildSigningInput('{"a":1}', '1700000000')).toBe('1700000000.{"a":1}');
   });
 
-  it('handles empty payload with timestamp correctly', () => {
+  it('handles empty payload with timestamp correctly', async () => {
     expect(buildSigningInput('', '123')).toBe('123.');
   });
 });
 
 describe('computeWebhookSignature', () => {
-  it('produces a sha256= prefix signature', () => {
+  it('produces a sha256= prefix signature', async () => {
     const sig = computeWebhookSignature('payload', 'secret');
     expect(sig.startsWith('sha256=')).toBe(true);
     expect(sig.length).toBe(7 + 64);
   });
 
-  it('produces different signatures when timestamp differs', () => {
+  it('produces different signatures when timestamp differs', async () => {
     const sigNoTs = computeWebhookSignature('payload', 'secret');
     const sigWithTs = computeWebhookSignature('payload', 'secret', '1700000000');
     expect(sigNoTs).not.toBe(sigWithTs);
   });
 
-  it('is deterministic for the same inputs', () => {
+  it('is deterministic for the same inputs', async () => {
     expect(computeWebhookSignature('p', 's', 't')).toBe(computeWebhookSignature('p', 's', 't'));
   });
 });
 
 describe('verifySignature', () => {
-  it('returns {valid:true} for a valid legacy (no-timestamp) signature', () => {
+  it('returns {valid:true} for a valid legacy (no-timestamp) signature', async () => {
     const payload = '{"event":"test"}';
     const secret = 'whsec_test_secret';
     const header = computeSignatureLegacy(payload, secret);
@@ -75,7 +75,7 @@ describe('verifySignature', () => {
     expect(result.valid).toBe(true);
   });
 
-  it('returns {valid:false, reason:hmac_mismatch} for a signature computed with the wrong secret', () => {
+  it('returns {valid:false, reason:hmac_mismatch} for a signature computed with the wrong secret', async () => {
     const payload = '{"event":"test"}';
     const secret = 'whsec_test_secret';
     const header = computeSignatureLegacy(payload, secret);
@@ -85,14 +85,14 @@ describe('verifySignature', () => {
     expect(result.reason).toBe('hmac_mismatch');
   });
 
-  it('returns {valid:false} when the header does not have the sha256= prefix', () => {
+  it('returns {valid:false} when the header does not have the sha256= prefix', async () => {
     const payload = '{"event":"test"}';
     const result = verifySignature(payload, 'invalidsignature', 'secret');
     expect(result.valid).toBe(false);
     expect(result.reason).toBe('invalid_signature_prefix');
   });
 
-  it('returns {valid:true} for empty payload with correct signature', () => {
+  it('returns {valid:true} for empty payload with correct signature', async () => {
     const payload = '';
     const secret = 'whsec_secret';
     const header = computeSignatureLegacy(payload, secret);
@@ -101,7 +101,7 @@ describe('verifySignature', () => {
     expect(verifySignature(payload, header, 'different_secret').valid).toBe(false);
   });
 
-  it('uses constant-time comparison (different lengths handled)', () => {
+  it('uses constant-time comparison (different lengths handled)', async () => {
     const payload = '{}';
     const secret = 'test';
     const header = 'sha256=abc';
@@ -111,7 +111,7 @@ describe('verifySignature', () => {
     expect(result.reason).toBe('signature_length_mismatch');
   });
 
-  it('accepts a valid signature when timestamp is cryptographically bound', () => {
+  it('accepts a valid signature when timestamp is cryptographically bound', async () => {
     const payload = '{"event":"test"}';
     const secret = 'whsec_test_secret';
     const ts = Math.floor(Date.now() / 1000).toString();
@@ -121,7 +121,7 @@ describe('verifySignature', () => {
     expect(result.valid).toBe(true);
   });
 
-  it('rejects a legacy-signature request when caller claims it has a timestamp', () => {
+  it('rejects a legacy-signature request when caller claims it has a timestamp', async () => {
     // The attacker takes a previously-captured valid signature (no-timestamp)
     // and re-sends it with a fresh/fake timestamp header expecting the server
     // to skip timestamp-binding.  It must reject because the signature was
@@ -136,7 +136,7 @@ describe('verifySignature', () => {
     expect(result.reason).toBe('hmac_mismatch');
   });
 
-  it('rejects a valid timestamp-bound signature when timestamp is stripped', () => {
+  it('rejects a valid timestamp-bound signature when timestamp is stripped', async () => {
     // The attacker captures a request with timestamp-bound signature, then
     // strips the X-Webhook-Timestamp header.  Because signing input differs,
     // the HMAC no longer matches and the request MUST be rejected.
@@ -151,7 +151,7 @@ describe('verifySignature', () => {
     expect(result.reason).toBe('hmac_mismatch');
   });
 
-  it('rejects when timestamp is in the signature but forged to a different value', () => {
+  it('rejects when timestamp is in the signature but forged to a different value', async () => {
     const payload = '{"event":"test"}';
     const secret = 'whsec_test_secret';
     const realTs = Math.floor(Date.now() / 1000).toString();
@@ -163,18 +163,18 @@ describe('verifySignature', () => {
     expect(result.reason).toBe('hmac_mismatch');
   });
 
-  it('rejects when signature prefix is entirely missing', () => {
+  it('rejects when signature prefix is entirely missing', async () => {
     const result = verifySignature('{}', '', 'secret');
     expect(result.valid).toBe(false);
     expect(result.reason).toBe('missing_signature_header');
   });
 
-  it('rejects when signature header is undefined-ish via null/empty', () => {
+  it('rejects when signature header is undefined-ish via null/empty', async () => {
     const result = verifySignature('{}', null as any, 'secret');
     expect(result.valid).toBe(false);
   });
 
-  it('logs all authentication failures via structured logger', () => {
+  it('logs all authentication failures via structured logger', async () => {
     verifySignature('{}', 'badprefix', 'secret', undefined, undefined, { requestId: 'r-1' });
     expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.any(String),
@@ -184,58 +184,58 @@ describe('verifySignature', () => {
 });
 
 describe('extractSignature', () => {
-  it('extracts from x-webhook-signature header', () => {
+  it('extracts from x-webhook-signature header', async () => {
     const headers = { 'x-webhook-signature': 'sha256=abc123' };
     expect(extractSignature(headers)).toBe('sha256=abc123');
   });
 
-  it('extracts from X-Webhook-Signature header', () => {
+  it('extracts from X-Webhook-Signature header', async () => {
     const headers = { 'X-Webhook-Signature': 'sha256=abc123' };
     expect(extractSignature(headers)).toBe('sha256=abc123');
   });
 
-  it('returns null when no signature header is present', () => {
+  it('returns null when no signature header is present', async () => {
     expect(extractSignature({})).toBeNull();
   });
 
-  it('takes the first value when header is an array', () => {
+  it('takes the first value when header is an array', async () => {
     const headers = { 'x-webhook-signature': ['sha256=first', 'sha256=second'] };
     expect(extractSignature(headers)).toBe('sha256=first');
   });
 });
 
 describe('extractKeyId', () => {
-  it('extracts from x-webhook-key-id header', () => {
+  it('extracts from x-webhook-key-id header', async () => {
     const headers = { 'x-webhook-key-id': 'key-1' };
     expect(extractKeyId(headers)).toBe('key-1');
   });
 
-  it('extracts from X-Webhook-Key-Id header', () => {
+  it('extracts from X-Webhook-Key-Id header', async () => {
     const headers = { 'X-Webhook-Key-Id': 'key-1' };
     expect(extractKeyId(headers)).toBe('key-1');
   });
 
-  it('returns null when no key-id header is present', () => {
+  it('returns null when no key-id header is present', async () => {
     expect(extractKeyId({})).toBeNull();
   });
 });
 
 describe('extractTimestamp', () => {
-  it('extracts from x-webhook-timestamp header', () => {
+  it('extracts from x-webhook-timestamp header', async () => {
     const headers = { 'x-webhook-timestamp': '1700000000' };
     expect(extractTimestamp(headers)).toBe('1700000000');
   });
 
-  it('extracts from X-Webhook-Timestamp header', () => {
+  it('extracts from X-Webhook-Timestamp header', async () => {
     const headers = { 'X-Webhook-Timestamp': '1700000000' };
     expect(extractTimestamp(headers)).toBe('1700000000');
   });
 
-  it('returns null when no timestamp header is present', () => {
+  it('returns null when no timestamp header is present', async () => {
     expect(extractTimestamp({})).toBeNull();
   });
 
-  it('takes the first value when header is an array', () => {
+  it('takes the first value when header is an array', async () => {
     const headers = { 'x-webhook-timestamp': ['1700000000', '1700000001'] };
     expect(extractTimestamp(headers)).toBe('1700000000');
   });
@@ -247,66 +247,66 @@ describe('getSecretForKey', () => {
     { id: 'key-2', secret: 'secret_2' },
   ];
 
-  it('returns the matching secret', () => {
+  it('returns the matching secret', async () => {
     expect(getSecretForKey(secrets, 'key-1')).toBe('secret_1');
     expect(getSecretForKey(secrets, 'key-2')).toBe('secret_2');
   });
 
-  it('returns undefined for an unknown key', () => {
+  it('returns undefined for an unknown key', async () => {
     expect(getSecretForKey(secrets, 'unknown-key')).toBeUndefined();
   });
 
-  it('returns undefined for an empty secrets array', () => {
+  it('returns undefined for an empty secrets array', async () => {
     expect(getSecretForKey([], 'key-1')).toBeUndefined();
   });
 });
 
 describe('isTimestampValid', () => {
-  it('accepts a recent timestamp within the expiration window', () => {
+  it('accepts a recent timestamp within the expiration window', async () => {
     const currentTimestamp = Math.floor(Date.now() / 1000);
     expect(isTimestampValid(currentTimestamp.toString(), 300)).toBe(true);
   });
 
-  it('rejects a timestamp older than the expiration window', () => {
+  it('rejects a timestamp older than the expiration window', async () => {
     const oldTimestamp = Math.floor(Date.now() / 1000) - 400; // 400 seconds ago, max is 300
     expect(isTimestampValid(oldTimestamp.toString(), 300)).toBe(false);
   });
 
-  it('accepts a timestamp at the exact expiration boundary', () => {
+  it('accepts a timestamp at the exact expiration boundary', async () => {
     const boundaryTimestamp = Math.floor(Date.now() / 1000) - 300; // Exactly 300 seconds ago
     expect(isTimestampValid(boundaryTimestamp.toString(), 300)).toBe(true);
   });
 
-  it('rejects a timestamp just over the expiration boundary', () => {
+  it('rejects a timestamp just over the expiration boundary', async () => {
     const overBoundaryTimestamp = Math.floor(Date.now() / 1000) - 301; // 301 seconds ago
     expect(isTimestampValid(overBoundaryTimestamp.toString(), 300)).toBe(false);
   });
 
-  it('rejects a timestamp from the future (more than 1 minute ahead)', () => {
+  it('rejects a timestamp from the future (more than 1 minute ahead)', async () => {
     const futureTimestamp = Math.floor(Date.now() / 1000) + 120; // 2 minutes in the future
     expect(isTimestampValid(futureTimestamp.toString(), 300)).toBe(false);
   });
 
-  it('accepts a timestamp slightly in the future (within clock skew tolerance)', () => {
+  it('accepts a timestamp slightly in the future (within clock skew tolerance)', async () => {
     const slightlyFutureTimestamp = Math.floor(Date.now() / 1000) + 30; // 30 seconds in the future
     expect(isTimestampValid(slightlyFutureTimestamp.toString(), 300)).toBe(true);
   });
 
-  it('rejects an invalid timestamp string', () => {
+  it('rejects an invalid timestamp string', async () => {
     expect(isTimestampValid('not-a-number', 300)).toBe(false);
   });
 
-  it('rejects an empty timestamp string', () => {
+  it('rejects an empty timestamp string', async () => {
     expect(isTimestampValid('', 300)).toBe(false);
   });
 
-  it('rejects NaN as a timestamp', () => {
+  it('rejects NaN as a timestamp', async () => {
     expect(isTimestampValid('NaN', 300)).toBe(false);
   });
 });
 
 describe('verifySignature with timestamp expiration', () => {
-  it('verifies both signature AND timestamp when both are valid (bound signature)', () => {
+  it('verifies both signature AND timestamp when both are valid (bound signature)', async () => {
     const payload = '{"event":"test"}';
     const secret = 'whsec_test_secret';
     const currentTimestamp = Math.floor(Date.now() / 1000).toString();
@@ -316,7 +316,7 @@ describe('verifySignature with timestamp expiration', () => {
     expect(result.valid).toBe(true);
   });
 
-  it('rejects when signature is bound to timestamp but timestamp is expired', () => {
+  it('rejects when signature is bound to timestamp but timestamp is expired', async () => {
     const payload = '{"event":"test"}';
     const secret = 'whsec_test_secret';
     const oldTimestamp = (Math.floor(Date.now() / 1000) - 400).toString();
@@ -327,7 +327,7 @@ describe('verifySignature with timestamp expiration', () => {
     expect(result.reason).toBe('timestamp_expired');
   });
 
-  it('rejects when timestamp is valid but HMAC is computed with wrong secret', () => {
+  it('rejects when timestamp is valid but HMAC is computed with wrong secret', async () => {
     const payload = '{"event":"test"}';
     const secret = 'whsec_test_secret';
     const currentTimestamp = Math.floor(Date.now() / 1000).toString();
@@ -337,7 +337,7 @@ describe('verifySignature with timestamp expiration', () => {
     expect(result.valid).toBe(false);
   });
 
-  it('skips timestamp expiration check when maxAgeSeconds is not specified', () => {
+  it('skips timestamp expiration check when maxAgeSeconds is not specified', async () => {
     const payload = '{"event":"test"}';
     const secret = 'whsec_test_secret';
     const oldTimestamp = (Math.floor(Date.now() / 1000) - 400).toString();
@@ -347,7 +347,7 @@ describe('verifySignature with timestamp expiration', () => {
     expect(result.valid).toBe(true);
   });
 
-  it('skips timestamp binding when timestamp header is not provided (legacy mode)', () => {
+  it('skips timestamp binding when timestamp header is not provided (legacy mode)', async () => {
     const payload = '{"event":"test"}';
     const secret = 'whsec_test_secret';
     const header = computeWebhookSignature(payload, secret);
@@ -533,10 +533,8 @@ describe('verifyWebhookRequest — end-to-end request authentication', () => {
     // A timestamp is included so the request reaches the HMAC comparison and
     // this test keeps exercising the key-swap path specifically.
     const ts = Math.floor(Date.now() / 1000).toString();
-    const sig = computeWebhookSignature(payload, SECRETS[1].secret, ts);
-    const outcome = verifyWebhookRequest({
     // Signed with key-beta's secret but presented as key-alpha
-    const sig = computeWebhookSignature(payload, SECRETS[1].secret);
+    const sig = computeWebhookSignature(payload, SECRETS[1].secret, ts);
     const outcome = await verifyWebhookRequest({
       headers: {
         'x-webhook-signature': sig,
@@ -594,8 +592,8 @@ describe('Issue #853 — replay protection at the request boundary', () => {
     };
   }
 
-  it('REJECTS a request that carries no timestamp (would otherwise replay forever)', () => {
-    const outcome = verifyWebhookRequest({
+  it('REJECTS a request that carries no timestamp (would otherwise replay forever)', async () => {
+    const outcome = await verifyWebhookRequest({
       headers: signedHeaders(BODY, null),
       rawBody: BODY,
       secrets: SECRETS,
@@ -606,8 +604,8 @@ describe('Issue #853 — replay protection at the request boundary', () => {
     expect(outcome.errorCode).toBe('AUTH_MISSING_TIMESTAMP');
   });
 
-  it('ACCEPTS the same timestamp-less request when legacy mode is opted into', () => {
-    const outcome = verifyWebhookRequest({
+  it('ACCEPTS the same timestamp-less request when legacy mode is opted into', async () => {
+    const outcome = await verifyWebhookRequest({
       headers: signedHeaders(BODY, null),
       rawBody: BODY,
       secrets: SECRETS,
@@ -616,13 +614,13 @@ describe('Issue #853 — replay protection at the request boundary', () => {
     expect(outcome.authenticated).toBe(true);
   });
 
-  it('REJECTS a captured request replayed after the freshness window has passed', () => {
+  it('REJECTS a captured request replayed after the freshness window has passed', async () => {
     const realNow = Date.now;
     try {
       const ts = String(Math.floor(Date.now() / 1000));
       const headers = signedHeaders(BODY, ts);
 
-      const first = verifyWebhookRequest({
+      const first = await verifyWebhookRequest({
         headers,
         rawBody: BODY,
         secrets: SECRETS,
@@ -632,7 +630,7 @@ describe('Issue #853 — replay protection at the request boundary', () => {
 
       // Replay one hour later with the exact same captured headers.
       Date.now = () => realNow() + 60 * 60 * 1000;
-      const replay = verifyWebhookRequest({
+      const replay = await verifyWebhookRequest({
         headers,
         rawBody: BODY,
         secrets: SECRETS,
@@ -646,12 +644,12 @@ describe('Issue #853 — replay protection at the request boundary', () => {
     }
   });
 
-  it('REJECTS a verbatim replay inside the freshness window via the replay cache', () => {
+  it('REJECTS a verbatim replay inside the freshness window via the replay cache', async () => {
     const replayCache = new WebhookReplayCache();
     const ts = String(Math.floor(Date.now() / 1000));
     const headers = signedHeaders(BODY, ts);
 
-    const first = verifyWebhookRequest({
+    const first = await verifyWebhookRequest({
       headers,
       rawBody: BODY,
       secrets: SECRETS,
@@ -661,7 +659,7 @@ describe('Issue #853 — replay protection at the request boundary', () => {
 
     // Same signature, no Idempotency-Key header — the pre-existing replay
     // defence the attacker would trivially bypass.
-    const second = verifyWebhookRequest({
+    const second = await verifyWebhookRequest({
       headers,
       rawBody: BODY,
       secrets: SECRETS,
@@ -677,18 +675,18 @@ describe('Issue #853 — replay protection at the request boundary', () => {
     );
   });
 
-  it('replay cache does not reject a genuinely new request from the same key', () => {
+  it('replay cache does not reject a genuinely new request from the same key', async () => {
     const replayCache = new WebhookReplayCache();
     const ts = String(Math.floor(Date.now() / 1000));
 
-    const a = verifyWebhookRequest({
+    const a = await verifyWebhookRequest({
       headers: signedHeaders(BODY, ts),
       rawBody: BODY,
       secrets: SECRETS,
       replayCache,
     });
     const other = '{"action":"transfer","amount":20}';
-    const b = verifyWebhookRequest({
+    const b = await verifyWebhookRequest({
       headers: signedHeaders(other, ts),
       rawBody: other,
       secrets: SECRETS,
@@ -699,11 +697,11 @@ describe('Issue #853 — replay protection at the request boundary', () => {
     expect(b.authenticated).toBe(true);
   });
 
-  it('does not record invalid signatures in the replay cache', () => {
+  it('does not record invalid signatures in the replay cache', async () => {
     const replayCache = new WebhookReplayCache();
     const ts = String(Math.floor(Date.now() / 1000));
 
-    const bad = verifyWebhookRequest({
+    const bad = await verifyWebhookRequest({
       headers: signedHeaders(BODY, ts, 'some_other_secret'),
       rawBody: BODY,
       secrets: SECRETS,
@@ -712,7 +710,7 @@ describe('Issue #853 — replay protection at the request boundary', () => {
     expect(bad.authenticated).toBe(false);
 
     // The genuine request must still be accepted afterwards.
-    const good = verifyWebhookRequest({
+    const good = await verifyWebhookRequest({
       headers: signedHeaders(BODY, ts),
       rawBody: BODY,
       secrets: SECRETS,
@@ -721,9 +719,9 @@ describe('Issue #853 — replay protection at the request boundary', () => {
     expect(good.authenticated).toBe(true);
   });
 
-  it('REJECTS a non-integer timestamp instead of silently truncating it', () => {
+  it('REJECTS a non-integer timestamp instead of silently truncating it', async () => {
     const ts = `${Math.floor(Date.now() / 1000)}garbage`;
-    const outcome = verifyWebhookRequest({
+    const outcome = await verifyWebhookRequest({
       headers: signedHeaders(BODY, ts),
       rawBody: BODY,
       secrets: SECRETS,
@@ -733,9 +731,9 @@ describe('Issue #853 — replay protection at the request boundary', () => {
     expect(outcome.errorCode).toBe('AUTH_TIMESTAMP_EXPIRED');
   });
 
-  it('REJECTS a fractional timestamp', () => {
+  it('REJECTS a fractional timestamp', async () => {
     const ts = `${Math.floor(Date.now() / 1000)}.9`;
-    const outcome = verifyWebhookRequest({
+    const outcome = await verifyWebhookRequest({
       headers: signedHeaders(BODY, ts),
       rawBody: BODY,
       secrets: SECRETS,
@@ -744,10 +742,10 @@ describe('Issue #853 — replay protection at the request boundary', () => {
     expect(outcome.errorCode).toBe('AUTH_TIMESTAMP_EXPIRED');
   });
 
-  it('accepts an uppercase hex signature (hex is case-insensitive)', () => {
+  it('accepts an uppercase hex signature (hex is case-insensitive)', async () => {
     const ts = String(Math.floor(Date.now() / 1000));
     const headers = signedHeaders(BODY, ts);
-    const outcome = verifyWebhookRequest({
+    const outcome = await verifyWebhookRequest({
       headers: {
         ...headers,
         'x-webhook-signature': headers['x-webhook-signature'].toUpperCase(),
@@ -759,13 +757,13 @@ describe('Issue #853 — replay protection at the request boundary', () => {
     expect(outcome.authenticated).toBe(true);
   });
 
-  it('still rejects a genuine signature whose hex case was altered', () => {
+  it('still rejects a genuine signature whose hex case was altered', async () => {
     const ts = String(Math.floor(Date.now() / 1000));
     const headers = signedHeaders(BODY, ts);
     const tampered = headers['x-webhook-signature'].replace(/.$/, (c) =>
       c === 'a' ? 'b' : 'a'
     );
-    const outcome = verifyWebhookRequest({
+    const outcome = await verifyWebhookRequest({
       headers: { ...headers, 'x-webhook-signature': tampered },
       rawBody: BODY,
       secrets: SECRETS,

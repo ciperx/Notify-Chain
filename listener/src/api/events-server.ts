@@ -28,6 +28,7 @@ import {
   IdempotencyKeyReuseError,
 } from '../services/idempotency-key-service';
 import { WebhookReplayCache } from '../services/webhook-replay-cache';
+import { resolveCorsPolicy, resolveAllowedOrigin } from './cors-policy';
 import { IdempotencyKeyService, IdempotencyKeyReuseError } from '../services/idempotency-key-service';
 import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
@@ -71,6 +72,8 @@ export interface EventsServerOptions {
   port: number;
   corsOrigin?: string;
   isProduction?: boolean;
+  /** Runtime environment used to resolve the CORS policy (defaults to NODE_ENV). */
+  nodeEnv?: string;
   stellarRpcUrl: string;
   stellarNetwork?: string;
   stellarNetworkPassphrase?: string;
@@ -438,7 +441,10 @@ function isRateLimitExempt(pathname: string): boolean {
 }
 
 export function createEventsServer(options: EventsServerOptions): http.Server {
-  const corsOrigin = options.corsOrigin ?? 'http://localhost:5173';
+  const corsPolicy = resolveCorsPolicy(
+    options.nodeEnv ?? process.env.NODE_ENV,
+    options.corsOrigin ?? process.env.CORS_ALLOWED_ORIGINS
+  );
   const historyService = new NotificationHistoryService();
   const suggestionService = new SearchSuggestionService();
   const notificationSearchService = new NotificationSearchService();
@@ -494,16 +500,25 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    res.setHeader('Access-Control-Allow-Origin', corsOrigin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader(
-      'Access-Control-Allow-Headers',
-      'Content-Type, X-API-Key, Authorization, X-Correlation-Id, X-Request-Id',
-    );
-    res.setHeader(
-      'Access-Control-Expose-Headers',
-      'X-Request-Id, X-Correlation-Id, X-Response-Time',
-    );
+    const requestOrigin = (req.headers.origin as string | undefined)?.trim() || undefined;
+    const allowedOrigin = resolveAllowedOrigin(corsPolicy, requestOrigin);
+
+    if (allowedOrigin !== null) {
+      // Only allowed origins (or non-CORS requests with `null`) get CORS headers.
+      res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+      if (allowedOrigin !== '*') {
+        res.setHeader('Vary', 'Origin');
+      }
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader(
+        'Access-Control-Allow-Headers',
+        'Content-Type, X-API-Key, Authorization, X-Correlation-Id, X-Request-Id',
+      );
+      res.setHeader(
+        'Access-Control-Expose-Headers',
+        'X-Request-Id, X-Correlation-Id, X-Response-Time',
+      );
+    }
 
     const url = new URL(req.url ?? '/', 'http://localhost');
     const pathname = url.pathname;
@@ -557,6 +572,17 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     if (req.method === 'OPTIONS') {
       res.removeHeader('Content-Type');
+      if (requestOrigin !== undefined && allowedOrigin === null) {
+        // Preflight from a disallowed origin: explicitly reject (#998).
+        logger.warn('CORS preflight rejected: origin not allowed', {
+          requestId,
+          correlationId,
+          origin: requestOrigin,
+          environment: corsPolicy.environment,
+        });
+        sendErr(res, 403, 'Origin not allowed by CORS policy', ErrorCode.FORBIDDEN);
+        return;
+      }
       res.writeHead(204);
       res.end();
       return;
@@ -825,14 +851,24 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           const secrets = options.webhookSecrets ?? [];
           const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-        const secrets = options.webhookSecrets ?? [];
-        const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-        
+
         // Use default database for audit log or mock one if not available.
-        // Actually since SecurityAuditService requires Database, let's pass a real one.
-        const db = getDatabase();
-        const { SecurityAuditService } = require('../services/security-audit');
-        const auditService = new SecurityAuditService(db);
+        // SecurityAuditService requires a Database; when one can't be created
+        // (e.g. unit tests without a configured database) run verification
+        // without audit logging instead of failing the request.
+        let auditService: unknown;
+        try {
+          const db = getDatabase();
+          const { SecurityAuditService } = require('../services/security-audit');
+          auditService = new SecurityAuditService(db);
+        } catch (auditErr) {
+          logger.warn('Security audit service unavailable; continuing without audit logging', {
+            requestId,
+            correlationId,
+            error: auditErr instanceof Error ? auditErr.message : String(auditErr),
+          });
+          auditService = undefined;
+        }
 
         const auth = await verifyWebhookRequest({
           headers: req.headers as Record<string, string | string[] | undefined>,
@@ -843,21 +879,16 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           correlationId,
           maxAgeSeconds,
           requireTimestamp: options.requireWebhookTimestamp !== false,
-          replayCache: webhookReplayCache,
+          // When the sender supplies an Idempotency-Key, Level 1 (the
+          // idempotency service) owns duplicate detection and returns the
+          // cached response; the Level 2 signature replay cache must not
+          // reject the legitimate redelivery first. Without a key, the
+          // replay cache is the only defence.
+          replayCache: idempotencyKey ? undefined : webhookReplayCache,
           auditService,
         });
 
-          const auth = verifyWebhookRequest({
-            headers: req.headers as Record<string, string | string[] | undefined>,
-            rawBody,
-            secrets,
-            sourceIp,
-            requestId,
-            correlationId,
-            maxAgeSeconds,
-          });
-
-          if (!auth.authenticated) {
+        if (!auth.authenticated) {
             logger.warn('Webhook authentication failed', {
               requestId,
               correlationId,
@@ -1506,7 +1537,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    function isValidApiKey(apiKey: string | undefined, allowedKeys: Array<{ key: string; name?: string }> | undefined): boolean {
     function isValidApiKey(
       apiKey: string | undefined,
       allowedKeys: Array<{ key: string; name?: string }> | undefined,
@@ -1552,21 +1582,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    // Get notification delivery history endpoint
-    if (req.method === 'GET' && req.url?.startsWith('/api/notifications/history')) {
-      const apiKey = req.headers['x-api-key'] as string | undefined;
-      if (!isValidApiKey(apiKey, options.apiKeys)) {
-        sendErr(res, 401, 'Unauthorized: Invalid or missing API key', ErrorCode.UNAUTHORIZED);
-        return;
-      }
-
-      const url = new URL(req.url, 'http://localhost');
-      const limit = url.searchParams.get('limit')
-        ? parseInt(url.searchParams.get('limit')!, 10)
-        : undefined;
-      const offset = url.searchParams.get('offset')
-        ? parseInt(url.searchParams.get('offset')!, 10)
-        : undefined;
     // Get notification delivery history endpoint.
     // Matched on the rewritten pathname so /api/v1/notifications/history is
     // routed (and authenticated) the same as the unversioned path.
